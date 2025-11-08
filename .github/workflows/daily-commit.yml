@@ -1,0 +1,37 @@
+name: Daily Contribution
+
+on:
+  schedule:
+    - cron: "30 3 * * *"   # Runs every day at 09:00 AM IST (03:30 UTC)
+  workflow_dispatch:        # allows you to run it manually anytime
+
+permissions:
+  contents: write
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config user.name "chiruu-git"
+          git config user.email "YOUR_GITHUB_NO_REPLY_EMAIL"
+
+      - name: Daily heartbeat
+        run: |
+          mkdir -p .contrib
+          ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "$ts daily ping" >> .contrib/activity.log
+
+      - name: Commit and push
+        run: |
+          if ! git diff --quiet; then
+            git add .
+            git commit -m "Automated daily contribution [skip ci]"
+            git push
+          else
+            echo "No changes to commit"
+          fi
