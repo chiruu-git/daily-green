@@ -18,7 +18,7 @@ jobs:
       - name: Configure Git
         run: |
           git config user.name "chiruu-git"
-          git config user.email "YOUR_GITHUB_NO_REPLY_EMAIL"
+          git config user.email "133848646+chiruu-git@users.noreply.github.com"
 
       - name: Daily heartbeat
         run: |
