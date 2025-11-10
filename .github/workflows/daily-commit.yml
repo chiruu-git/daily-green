@@ -1,16 +1,15 @@
-name: Daily Contribution
+name: Randomized Contributions
 
 on:
   schedule:
-    - cron: "30 3 * * *"    # 9:00 AM IST (03:30 UTC)
-    - cron: "30 15 * * *"   # 9:00 PM IST (15:30 UTC)
-  workflow_dispatch:         # manual trigger option
+    - cron: "0 */3 * * *"   # every 3 hours (UTC)
+  workflow_dispatch:         # manual trigger
 
 permissions:
   contents: write
 
 jobs:
-  daily:
+  randomize:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,18 +20,36 @@ jobs:
           git config user.name "chiruu-git"
           git config user.email "133848646+chiruu-git@users.noreply.github.com"
 
-      - name: Daily heartbeat
+      # Jitter so runs don't happen at exact same minute each time
+      - name: Random delay (0–30 min)
+        run: |
+          SLEEP=$(( RANDOM % 1800 ))
+          echo "Sleeping for $SLEEP seconds to add randomness..."
+          sleep "$SLEEP"
+
+      # Decide how many commits to make this run (0–4), with bias to small numbers
+      - name: Maybe commit a few times
         run: |
           mkdir -p .contrib
-          ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          echo "$ts daily ping" >> .contrib/activity.log
-
-      - name: Commit and push
-        run: |
-          if ! git diff --quiet; then
-            git add .
-            git commit -m "Automated daily contribution [skip ci]"
-            git push
-          else
-            echo "No changes to commit"
+          # Weighted randomness: 0,1,1,2,2,3,4 (more chances of 0-2)
+          picks=(0 1 1 2 2 3 4)
+          COMMITS=${picks[$((RANDOM % ${#picks[@]}))]}
+          echo "This run will make $COMMITS commits."
+          if [ "$COMMITS" -eq 0 ]; then
+            echo "Skipping this run to keep pattern natural."
+            exit 0
           fi
+
+          for i in $(seq 1 "$COMMITS"); do
+            ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            month="$(date -u +'%Y-%m')"
+            file=".contrib/heartbeat-${month}.log"
+            echo "$ts random tick #$i" >> "$file"
+            git add "$file"
+            git commit -m "random: tick $ts ($i/$COMMITS) [skip ci]"
+            # tiny random pause between commits (0–20s)
+            sleep $(( RANDOM % 20 ))
+          done
+
+      - name: Push
+        run: git push
