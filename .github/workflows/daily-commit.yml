@@ -14,20 +14,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true   # allow the action to push using GITHUB_TOKEN
+          fetch-depth: 0             # full history (safer for commits)
 
       - name: Configure Git
         run: |
           git config user.name "chiruu-git"
           git config user.email "133848646+chiruu-git@users.noreply.github.com"
 
-      # Jitter so runs don't happen at exact same minute each time
       - name: Random delay (0–30 min)
         run: |
           SLEEP=$(( RANDOM % 1800 ))
           echo "Sleeping for $SLEEP seconds to add randomness..."
           sleep "$SLEEP"
 
-      # Decide how many commits to make this run (0–4), with bias to small numbers
       - name: Maybe commit a few times
         run: |
           mkdir -p .contrib
@@ -46,10 +47,25 @@ jobs:
             file=".contrib/heartbeat-${month}.log"
             echo "$ts random tick #$i" >> "$file"
             git add "$file"
-            git commit -m "random: tick $ts ($i/$COMMITS) [skip ci]"
+            git commit -m "random: tick $ts ($i/$COMMITS) [skip ci]" || true
             # tiny random pause between commits (0–20s)
             sleep $(( RANDOM % 20 ))
           done
 
-      - name: Push
-        run: git push
+      - name: Debug status
+        run: |
+          echo "--- git remote ---"
+          git remote -v
+          echo "--- branch ---"
+          git branch --show-current || true
+          echo "--- status ---"
+          git status --porcelain || true
+
+      - name: Push (explicit token)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # make remote use token so push is authenticated
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          # push to main; change to a different branch if you prefer
+          git push origin HEAD:main
