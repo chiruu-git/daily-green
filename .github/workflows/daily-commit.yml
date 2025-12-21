@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true   # allow the action to push using GITHUB_TOKEN
-          fetch-depth: 0             # full history (safer for commits)
+          fetch-depth: 0             # full history (safer for commits) arhg
 
       - name: Configure Git
         run: |
