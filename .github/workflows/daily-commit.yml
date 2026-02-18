@@ -3,7 +3,7 @@ name: Randomized Contributions
 on:
   schedule:
     - cron: "0 */3 * * *"   # every 3 hours (UTC)
-  workflow_dispatch:         # manual trigger
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,12 +11,13 @@ permissions:
 jobs:
   randomize:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: true   # allow the action to push using GITHUB_TOKEN
-          fetch-depth: 0             # full history (safer for commits) arhg
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Configure Git
         run: |
@@ -26,115 +27,149 @@ jobs:
       - name: Random delay (0–30 min)
         run: |
           SLEEP=$(( RANDOM % 1800 ))
-          echo "Sleeping for $SLEEP seconds to add randomness..."
+          echo "Sleeping for $SLEEP seconds..."
           sleep "$SLEEP"
 
-      - name: Decide & make commits (target 2–4/day)
+      - name: Decide & make commits
         env:
           BOT_EMAIL: "133848646+chiruu-git@users.noreply.github.com"
         run: |
           set -euo pipefail
 
-          # parameters (daily target between MIN_TARGET and MAX_TARGET)
-          MIN_TARGET=2
-          MAX_TARGET=4
-
-          # time helpers (UTC)
           TODAY="$(date -u +%Y-%m-%d)"
           DAY_START="${TODAY}T00:00:00Z"
 
-          # files for persistence
           mkdir -p .contrib
           TARGET_FILE=".contrib/target-${TODAY}.txt"
 
-          # scheduled hours for cron "0 */3 * * *" (UTC): 0,3,6,...,21
           SCHEDULED_HOURS=(0 3 6 9 12 15 18 21)
 
-          # compute or read target for today (ensure within bounds)
+          # -----------------------------
+          # Generate target for the day
+          # -----------------------------
           if [ -f "$TARGET_FILE" ]; then
             TARGET="$(cat "$TARGET_FILE" | tr -d '[:space:]')"
-            echo "Using existing target: $TARGET commits for $TODAY"
+            echo "Using existing target: $TARGET"
           else
+            WEEKDAY=$(date -u +%u)  # 1=Mon ... 7=Sun
+
+            DAY_ROLL=$(( RANDOM % 100 ))
+
+            if [ "$WEEKDAY" -ge 6 ]; then
+              # Weekend → generally lower activity
+              MIN_TARGET=0
+              MAX_TARGET=3
+              DAY_TYPE="WEEKEND"
+            else
+              if [ "$DAY_ROLL" -lt 50 ]; then
+                MIN_TARGET=0
+                MAX_TARGET=2
+                DAY_TYPE="LOW"
+              elif [ "$DAY_ROLL" -lt 85 ]; then
+                MIN_TARGET=2
+                MAX_TARGET=5
+                DAY_TYPE="MEDIUM"
+              else
+                MIN_TARGET=5
+                MAX_TARGET=10
+                DAY_TYPE="HIGH"
+              fi
+
+              # 5% chance extreme grind day
+              EXTREME_ROLL=$(( RANDOM % 100 ))
+              if [ "$EXTREME_ROLL" -lt 5 ]; then
+                MIN_TARGET=12
+                MAX_TARGET=20
+                DAY_TYPE="EXTREME"
+              fi
+            fi
+
             TARGET=$(( RANDOM % (MAX_TARGET - MIN_TARGET + 1) + MIN_TARGET ))
+
             echo "$TARGET" > "$TARGET_FILE"
-            echo "Set today's target to $TARGET commits for $TODAY"
+            echo "Today is a $DAY_TYPE day → Target: $TARGET commits"
           fi
 
-          # enforce max safety (in case file was tampered)
-          if [ "$TARGET" -gt "$MAX_TARGET" ]; then
-            echo "Target in file exceeded MAX_TARGET; capping to $MAX_TARGET"
-            TARGET=$MAX_TARGET
+          # Safety cap (never exceed 20)
+          if [ "$TARGET" -gt 20 ]; then
+            TARGET=20
             echo "$TARGET" > "$TARGET_FILE"
           fi
 
-          # count commits today made by the bot (author email)
+          # -----------------------------
+          # Count today's commits
+          # -----------------------------
           if git rev-parse --verify HEAD >/dev/null 2>&1; then
             COMMITS_TODAY=$(git log --since="${DAY_START}" --author="$BOT_EMAIL" --pretty=%H | wc -l | tr -d ' ')
           else
             COMMITS_TODAY=0
           fi
-          echo "Commits by bot today: $COMMITS_TODAY"
+
+          echo "Commits today: $COMMITS_TODAY / $TARGET"
 
           if [ "$COMMITS_TODAY" -ge "$TARGET" ]; then
-            echo "Target reached for today ($COMMITS_TODAY >= $TARGET). Exiting."
+            echo "Target reached. Exiting."
             exit 0
           fi
 
-          # compute runs remaining today (UTC)
+          # -----------------------------
+          # Calculate attempts remaining
+          # -----------------------------
           CURRENT_HOUR=$(date -u +%H)
-          CURRENT_HOUR=${CURRENT_HOUR#0} # strip leading zero
+          CURRENT_HOUR=${CURRENT_HOUR#0}
+
           RUNS_REMAINING=0
           for h in "${SCHEDULED_HOURS[@]}"; do
             if [ "$h" -gt "$CURRENT_HOUR" ]; then
               RUNS_REMAINING=$((RUNS_REMAINING + 1))
             fi
           done
-          # include current run as available attempt (so denom = remaining + 1)
+
           ATTEMPTS_LEFT=$((RUNS_REMAINING + 1))
-
           COMMITS_LEFT=$((TARGET - COMMITS_TODAY))
-          echo "Commits left: $COMMITS_LEFT, attempts left (including this one): $ATTEMPTS_LEFT"
 
-          # If there are no future attempts and commits left, commit all remaining now
-          if [ "$ATTEMPTS_LEFT" -le 1 ]; then
-            DO_COMMIT=1
-            COMMIT_COUNT="$COMMITS_LEFT"
-            echo "Last chance: will commit remaining $COMMIT_COUNT commit(s) now."
-          else
-            # decide probabilistically whether to commit now
-            # probability = COMMITS_LEFT / ATTEMPTS_LEFT
-            # scale to 0..999
-            NUM=$(( COMMITS_LEFT * 1000 / ATTEMPTS_LEFT ))
-            R=$(( RANDOM % 1000 ))
-            if [ "$R" -lt "$NUM" ]; then
-              DO_COMMIT=1
-              COMMIT_COUNT=1
-              echo "Random decision: make 1 commit now (R=$R < NUM=$NUM)."
-            else
-              DO_COMMIT=0
-              COMMIT_COUNT=0
-              echo "Random decision: skip committing in this run (R=$R >= NUM=$NUM)."
-            fi
-          fi
+          echo "Commits left: $COMMITS_LEFT"
+          echo "Attempts left: $ATTEMPTS_LEFT"
 
-          if [ "$DO_COMMIT" -eq 0 ]; then
+          if [ "$COMMITS_LEFT" -le 0 ]; then
             exit 0
           fi
 
-          # Make COMMIT_COUNT commits (usually 1)
+          # If last run, finish remaining commits
+          if [ "$ATTEMPTS_LEFT" -le 1 ]; then
+            COMMIT_COUNT="$COMMITS_LEFT"
+            echo "Last chance → committing remaining $COMMIT_COUNT"
+          else
+            # Probability = commits_left / attempts_left
+            NUM=$(( COMMITS_LEFT * 1000 / ATTEMPTS_LEFT ))
+            R=$(( RANDOM % 1000 ))
+
+            if [ "$R" -lt "$NUM" ]; then
+              COMMIT_COUNT=1
+              echo "Random decision → committing 1 (R=$R < $NUM)"
+            else
+              echo "Skipping this run (R=$R >= $NUM)"
+              exit 0
+            fi
+          fi
+
+          # -----------------------------
+          # Make commits
+          # -----------------------------
           for i in $(seq 1 "$COMMIT_COUNT"); do
             ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             month="$(date -u +'%Y-%m')"
             file=".contrib/heartbeat-${month}.log"
+
             echo "$ts random tick #$i" >> "$file"
             git add "$file"
-            # guard: don't fail if commit cannot be created for some reason
+
             git commit -m "random: tick $ts ($i/$COMMIT_COUNT) [skip ci]" || true
-            # tiny random pause between commits (0–20s)
+
             sleep $(( RANDOM % 20 ))
           done
 
-      - name: Debug status
+      - name: Debug
         run: |
           echo "--- git remote ---"
           git remote -v
@@ -143,11 +178,9 @@ jobs:
           echo "--- status ---"
           git status --porcelain || true
 
-      - name: Push (explicit token)
+      - name: Push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # make remote use token so push is authenticated
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
-          # push to main; change to a different branch if you prefer
           git push origin HEAD:main
